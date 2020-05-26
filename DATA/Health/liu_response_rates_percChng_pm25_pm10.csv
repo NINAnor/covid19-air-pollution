@@ -1,0 +1,49 @@
+country,perc_change,perc_change_lwr,perc_change_upr,measure
+Australia,1.42,-0.12,2.99,pm25
+Brazil,,,,pm25
+Canada,1.7,1.17,2.23,pm25
+Chile,0.27,-0.68,1.23,pm25
+China,0.41,0.32,0.5,pm25
+Colombia,,,,pm25
+Czechia,,,,pm25
+Estonia,0.23,-4.24,4.9,pm25
+Finland,0.14,-0.55,0.83,pm25
+France,,,,pm25
+Greece,2.54,1.28,3.83,pm25
+Italy,,,,pm25
+Japan,1.42,1.05,1.81,pm25
+Mexico,1.29,0.21,2.39,pm25
+Portugal,0.03,-1.14,1.21,pm25
+South Africa,0.8,0.16,1.44,pm25
+South Korea,,,,pm25
+Spain,1.96,1.18,2.75,pm25
+Sweden,0.08,-1.44,1.62,pm25
+Switzerland,0.79,-0.96,2.58,pm25
+Taiwan,0.62,-0.39,1.64,pm25
+Thailand,,,,pm25
+United Kingdom,,,,pm25
+United States,1.58,1.28,1.88,pm25
+Australia,1.32,0.22,2.44,pm10
+Brazil,1.22,0.97,1.47,pm10
+Canada,0.76,0.25,1.27,pm10
+Chile,0.33,0.14,0.53,pm10
+China,0.28,0.22,0.34,pm10
+Colombia,0.03,-0.34,0.39,pm10
+Czechia,0.4,-0.02,0.82,pm10
+Estonia,0.46,-0.69,1.63,pm10
+Finland,0.07,-0.51,0.65,pm10
+France,0.46,-0.15,1.07,pm10
+Greece,0.53,0.17,0.9,pm10
+Italy,0.65,0.26,1.04,pm10
+Japan,1.05,0.78,1.31,pm10
+Mexico,0.67,0.48,0.86,pm10
+Portugal,0.11,-0.27,0.49,pm10
+South Africa,0.41,0.14,0.68,pm10
+South Korea,0.42,0.27,0.58,pm10
+Spain,0.87,0.6,1.15,pm10
+Sweden,0.2,-1.03,1.44,pm10
+Switzerland,0.47,-0.36,1.31,pm10
+Taiwan,0.25,-0.03,0.53,pm10
+Thailand,0.61,0.024,0.99,pm10
+United Kingdom,0.06,-0.36,0.28,pm10
+United States,0.79,0.6,0.98,pm10
