@@ -1,4 +1,4 @@
-## COVID-19 lockdowns cause global air pollution declines with implications for public health risk
+## COVID-19 lockdowns cause global air pollution declines
 
 Data and scripts in support of published manuscript:  https://www.medrxiv.org/content/10.1101/2020.04.10.20060673v1
 
@@ -18,6 +18,5 @@ The scripts should be run in the following order:
 4. Sateillte_analysis.R
 5. Station_analysis.R
 6. Mobility_vs_pollution.R
-7. Health_burden.R 
 
 The "SQL_queries.R" file contains SQL queries that are run on Athena AWS to fetch data from OpenAQ. See here fore more: https://registry.opendata.aws/openaq/
