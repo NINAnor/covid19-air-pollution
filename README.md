@@ -1,6 +1,6 @@
 ## COVID-19 lockdowns cause global air pollution declines
 
-Data and scripts in support of published manuscript:  https://www.medrxiv.org/content/10.1101/2020.04.10.20060673v1
+Data and scripts in support of published manuscript:  https://www.pnas.org/doi/full/10.1073/pnas.2006853117
 
 This is an Rproject with a complex workflow that requires manual transfer of data between local PC, Google Earth Engine and Amazon Web Services. Therefore it is not a seamless workflow and anyone interested in comonents of the analysis are encouraged to contact Zander Venter: zander.venter@nina.no
 
