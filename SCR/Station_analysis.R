@@ -1,9 +1,43 @@
-### Import data needed -------------------------------------------------
+### Import lockdown data --------------------------------------------------------------
+mobility <- read_csv('./DATA/COVID/internal-movement-covid.csv') %>%
+  mutate(Date = anytime(Date))
+names(mobility) <- c('country', 'countryCode', 'date', 'restriction')
+mobility <- mobility  %>%
+  mutate(lag = restriction-lag(restriction),
+         lockdown = ifelse(lag != 0 & restriction == lag, 1, NA))  %>%
+  drop_na() %>%
+  dplyr::select(-restriction, -lag)
 
-lockdown <- read_csv('./DATA/COVID/lockdown_dates.csv') %>%
-  mutate(lcDate = date) %>% dplyr::select(-date)
-ymd(20200515) - as.Date(mean(lockdown$lcDate))
+home <- read_csv('./DATA/COVID/stay-at-home-covid.csv') %>%
+  mutate(Date = anytime(Date))
+names(home) <- c('country', 'countryCode', 'date', 'restriction')
+home <- home %>%
+  mutate(lag = restriction-lag(restriction),
+         lockdown = ifelse(lag != 0 & restriction == lag, 1, NA)) %>%
+  drop_na() %>%
+  dplyr::select(-restriction, -lag)
 
+work <- read_csv('./DATA/COVID/workplace-closures-covid.csv') %>%
+  mutate(Date = anytime(Date))
+names(work) <- c('country', 'countryCode', 'date', 'restriction')
+work <- work  %>%
+  mutate(lag = restriction-lag(restriction),
+         lockdown = ifelse(lag != 0 & restriction == lag, 1, NA))  %>%
+  drop_na() %>%
+  dplyr::select(-restriction, -lag)
+
+
+lockdownAll <- mobility %>% mutate(type = 'mobility') %>%
+  bind_rows(home %>% mutate(type = 'home') ) %>%
+  bind_rows(work %>% mutate(type = 'work') ) %>%
+  mutate(date = ymd(date))
+
+
+lockdown <- lockdownAll %>%
+  group_by(country, countryCode) %>%
+  summarise(lcDate = mean(date))
+
+### Import other data needed -------------------------------------------------
 
 continents <- ne_countries(scale = "medium", returnclass = "sf")   %>%
   dplyr::select(iso_a3, economy, continent, -geometry) %>%
@@ -42,9 +76,7 @@ countryAir %>%
 countryAir <- countryAir %>%
   filter(!countryCode %in% c('BEL', 'BGR', 'CYP', 'MNG', 'SWE', 'ROU', 'EST', 'GRC'))
 
-
-#### Climate model ----------------------------------------------------------
-
+# Climate data for meteorogical corrections later on
 clim <- read_csv('./DATA/Climate/gfsDaily_allcities_updated.csv') %>%
   dplyr::select(-"system:index",-".geo")%>%
   mutate(date = as.Date(date)) %>%
@@ -55,19 +87,148 @@ clim <- read_csv('./DATA/Climate/gfsDaily_allcities_updated.csv') %>%
   ungroup()
 unique(clim$countryCode)
 
+
+### Make point change maps -----------------------------------------------------
+# Calculate simple differnece in air pollution concentration between 3-yr baseline and lockdown months
+ptDiff <- cityAirClean %>%
+  mutate( month = month(date)) %>%
+  mutate(test1 = ifelse(date < ymd(20200201) & month %in% c(2,3,4,5), "yBaseline",
+                        ifelse(date >= ymd(20200201), "y2020", NA)))%>%
+  drop_na(test1) %>%
+  group_by(Lat, Lon, city_id, countryCode, test1, parameter) %>%
+  summarise(mean =mean(mean, na.rm=TRUE)) %>%
+  pivot_wider( names_from= test1, values_from=mean) %>%
+  mutate(diffPerc = (y2020-yBaseline)/yBaseline*100)%>%
+  mutate(diffAbs = y2020-yBaseline) %>%
+  drop_na(diffPerc)
+hist(ptDiff$diffPerc)
+unique(ptDiff$parameter)
+
+labelNo2H <- expression(paste(NO[2]," (", mu, g, "/", m^3,")", sep=""))
+labelO3H <- expression(paste(O[3]," (",mu, g, "/", m^3,")", sep=""))
+labelPM25H <- expression(paste(" PM2.5 ",mu, g, "/", m^3, sep=""))
+
+no2LimsH <- c(0,70)
+o3LimsH <- c(0,200)
+pm25LimsH <- c(0,120)
+
+makeHistPlotPt <- function(param, limits, label){
+  
+  toPlot <- ptDiff  %>%
+    filter(parameter == param)  %>% 
+    mutate("2020" = y2020, "3-yr av." = yBaseline) %>%
+    gather(key, val, "2020","3-yr av.") %>%
+    group_by(key) %>%
+    mutate(med = median(val)) %>%
+    filter(val < limits[2], val>limits[1]) 
+  
+  plot <- toPlot %>%
+    ggplot(aes(x=val, fill=key)) +
+    geom_density(alpha=0.4, color=NA) +
+    #geom_histogram(position='dodge') +
+    geom_vline(aes(xintercept = med, color=key), linetype=1, size=1) +
+    ylab("Data density") +
+    xlab(label)  +
+    theme(
+      legend.title = element_blank(),
+      legend.position = c(.75, .85),
+      panel.background = element_rect(fill = alpha('white', 0.2)),
+      plot.background=element_rect(fill = alpha('white', 0.2)),
+      legend.background = element_rect(fill=alpha('white', 0.2))
+    )
+  return (plot)
+}
+
+
+h1Pt <- makeHistPlotPt("no2", no2LimsH,labelNo2H)
+h2Pt <- makeHistPlotPt("o3", o3LimsH,labelO3H)
+h3Pt <- makeHistPlotPt("pm25", pm25LimsH,labelPM25H)
+
+labelNo2Pt <- expression(paste(Delta,NO[2]," (%)", sep=""))
+labelO3Pt <- expression(paste(Delta,O[3]," (%)", sep=""))
+labelPM25Pt <- expression(paste(Delta," PM2.5 "," (%)", sep=""))
+
+
+makePointMap <- function(param, label1, label2, inset,panelLab){
+  plot <- df %>%
+    filter(parameter == param)  %>%
+    ggplot()  +
+    geom_sf(data = world_shp, 
+            fill = NA, 
+            color = '#000000',
+            size = 0.09,
+            alpha=0.9) +
+    geom_point(aes(x = Lon, y = Lat, color = diffPerc), shape=21, stroke=0.5, size=2)+
+    coord_sf( expand = FALSE)+
+    xlim(-130,155) +
+    ylim(-60,75)+ 
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      legend.position = c(.05, .05),
+      legend.justification = c("left", "bottom"),
+      legend.box.just = "left",
+      plot.margin=grid::unit(c(0,0,0,0), "mm")
+    )+
+    xlab('') +ylab('') + 
+    #scale_size_continuous(name=label2, limits = c(0, 25),breaks=c(5,15,25),range = c(0, 10)) +
+    #scale_size_continuous(name=label2) +
+    scale_color_gradientn(
+      name=label1,
+      limits = c(-25, 25), 
+      oob = scales::squish,
+      #breaks = c(-25,15,0,15,25),
+      colours = rev(selectPal))
+  g2 <- ggplotGrob(inset)
+  g3 <- grobTree(textGrob(panelLab, x=0.01,  y=0.95, hjust=0,
+                          gp=gpar(fontsize=20, fontface="bold")))
+  plot <- plot + 
+    #annotation_custom(grob = g2, xmin=-16, xmax=10, ymin=60, ymax=74)+ 
+    annotation_custom(grob = g2, xmin=40, xmax=115, ymin=-58, ymax=5) + 
+    annotation_custom(g3)
+  
+  return (plot)
+}
+makePointMap("no2", labelNo2Pt, labelNo2Pt2, h1Pt, "A")
+
+p1 <- makePointMap("no2", labelNo2Pt, labelNo2Pt2, h1Pt, "A")
+p2 <- makePointMap("o3", labelO3Pt, labelO3Pt2, h2Pt, "B")
+p3 <- makePointMap("pm25", labelPM25Pt, labelPM25Pt2, h3Pt, "C")
+
+p <- grid.arrange(p1,p2,p3, ncol=1,nrow=3, heights=c(0.33,0.33,0.33), padding = unit(0, "line"), newpage = T)
+#Export as 1200:1500
+dev.off()
+
+ggsave(filename = "fig1.svg",
+       width = 1200, height=1500, units='px',
+       plot = p)
+
+getCityChangeStats <- function(){
+  ptDiff %>%
+    left_join(cityPop, by='city_id') %>%
+    drop_na(population) %>%
+    ungroup() %>% 
+    group_by(parameter) %>%
+    summarise(diffPerc_IQR = IQR(diffPerc, na.rm=TRUE),
+              diffAbs_IQR = IQR(diffAbs, na.rm=TRUE),
+              diffPerc = weighted.mean(diffPerc, population, na.rm=TRUE),
+              diffAbs = weighted.mean(diffAbs, population, na.rm=TRUE))
+}
+getCityChangeStats()
+
+
+### Climate model ----------------------------------------------------------
+
 # Merge climate and station data
 stat <- countryAir %>%
-  #mutate(date = floor_date(date, 'week')) %>%
-  #group_by(countryCode, date, parameter) %>%
-  #summarise(mean = mean(mean, na.rm=TRUE)) %>%
   left_join(clim, by=c('date', 'countryCode')) %>%
   drop_na() %>%
   filter(date < ymd(20200515))%>%
   group_by(countryCode) %>%
   mutate(meanRel = scale2(mean))
 unique(stat$countryCode)
-View(stat)
 
+# populate with predictor variables
 stat <- stat  %>%
   mutate(month = month(date) ,
          day = yday(date), 
@@ -80,60 +241,7 @@ stat <- stat  %>%
   ungroup() %>%
   mutate_at(vars(total_precipitation_surface, temperature_2m_above_ground, wind_abs), list(lag=lag))
 
-hist(stat$meanRel)
-stat %>%
-  filter(parameter == "no2") %>%
-  filter(countryCode %in% unique(stat$countryCode)[1:10]) %>%
-  ggplot(aes(x=total_precipitation_surface, y=meanRel)) +
-  geom_point() +
-  geom_smooth()+
-  facet_wrap(~countryCode, scales='free')
-
-train <- stat %>%
-  filter(parameter == "no2") %>%
-  filter(countryCode == "CHN") %>%
-  filter(date < ymd(20190901))
-names(train)
-test <- stat %>%
-  filter(parameter == "no2") %>%
-  filter(countryCode == "CHN") %>%
-  filter(date > ymd(20190901))
-
-selectVars <- c("downward_shortwave_radiation_flux", "precipitable_water_entire_atmosphere",
-                "relative_humidity_2m_above_ground" ,"specific_humidity_2m_above_ground",
-                "temperature_2m_above_ground", "total_cloud_cover_entire_atmosphere",
-                "total_precipitation_surface" ,  "wind_abs",
-                "day_sin", "day_cos", "day_week_cos", "day_week_sin",
-                "mnth_sin" , "mnth_cos", "week_sin" , "week_cos" ,
-                "total_precipitation_surface_lag", "temperature_2m_above_ground_lag", "wind_abs_lag")
-
-model <-lm(mean ~ mnth_sin + mnth_cos + week_sin + week_cos + 
-             day_sin + day_cos + day_week_sin + day_week_cos +
-              downward_shortwave_radiation_flux + 
-              precipitable_water_entire_atmosphere + relative_humidity_2m_above_ground + 
-              temperature_2m_above_ground + total_cloud_cover_entire_atmosphere +
-              total_precipitation_surface + wind_abs +
-              total_precipitation_surface_lag + wind_abs_lag + temperature_2m_above_ground_lag, 
-            #family =  "gaussian",#Gamma(link = "log"), 
-            data = train)
-summary(model)
-
-pred <- as.data.frame(predict(model, newdata = test, interval = "confidence"))
-test$prediction<- pred$fit
-test$lwr<- pred$lwr
-test$upr<- pred$upr
-test %>%
-  ggplot(aes(x=mean, y=prediction)) + geom_point() + geom_smooth(method='lm')
-test %>%
-  gather(key, val, prediction, mean) %>%
-  ggplot(aes(x=date, y=val, color=key)) +
-  #geom_point() + 
-  geom_line() +
-  geom_ribbon(aes(ymin=lwr, ymax=upr), alpha=0.2, color=NA)
-
-
-stat %>% filter(countryCode == "ZAF")
-
+# Create output data frame to populate in modelling loop
 output <-data.frame(predVar=NA, countryCode=NA,param=NA,r2=NA,fstat=NA,pval=NA,
                     predic=NA,predLwr=NA, predUpr=NA, observed=NA, 
                     nObs=NA, date=NA)
@@ -164,7 +272,7 @@ for (p in predVars){
       paramSelect <- params[x]
       
       lmDatTrain <- stat %>% 
-        filter(countryCode ==countSelect, parameter == paramSelect, date < dateThresh) %>%
+        filter(countryCode == countSelect, parameter == paramSelect, date < dateThresh) %>%
         drop_na()
       #Sys.sleep(2)
       
@@ -173,14 +281,12 @@ for (p in predVars){
         next
       }
       lmDatTest <- stat %>% 
-        filter(countryCode ==countSelect, parameter == paramSelect, date >= ymd(20200101))
+        filter(countryCode ==countSelect, parameter == paramSelect, date >= dateThresh)
       #hist(lmDatTrain$mean)
       if (nrow(lmDatTest) == 0){
         print('breaking params 2')
         next
       }
-      
-      
       
       lm <- lm(as.data.frame(lmDatTrain)[, predVar] ~ mnth_sin + mnth_cos + week_sin + week_cos + 
                  day_sin + day_cos + day_week_sin + day_week_cos +
@@ -190,15 +296,12 @@ for (p in predVars){
                  total_precipitation_surface + wind_abs +
                  total_precipitation_surface_lag + wind_abs_lag + temperature_2m_above_ground_lag , 
                data=lmDatTrain)
-      #lm
       sum <- summary(lm)
       fstat <- sum$fstatistic[[1]]
       sum$coefficients
       pval <- broom::glance(lm)$p.value 
       r2 <- sum$r.squared
       
-      #predict(lm, newdata = lmDatTest[1,], interval = "confidence")
-      r <- 2
       for (r in 1:nrow(lmDatTest)){
         
         lmDatTestSelect <- as.data.frame(lmDatTest)[r, ]
@@ -226,17 +329,8 @@ for (p in predVars){
 unique(output$countryCode)
 length(unique(output$countryCode))
 
-output %>%
-  filter(predic < 400) %>%
-  gather(key, val, observed, predic) %>%
-  ggplot(aes(x=val, fill=key)) +
-  geom_histogram(position='dodge')
-
-as_tibble(output)%>% 
+lmResults <- as_tibble(output) %>% 
   drop_na(predVar) %>%
-  write_csv('./DATA/Output/lm_models_result_daily.csv')
-
-lmResults <- read_csv('./DATA/Output/lm_models_result_daily.csv')%>%
   mutate(country = countrycode(countryCode, origin = 'iso3c', destination = 'country.name')) %>%
   group_by(country, date, param, predVar) %>%
   summarise_at(vars(r2:nObs), mean)
@@ -245,9 +339,6 @@ tsAir <- lmResults %>%
   left_join(lockdown  %>% dplyr::select(country, lcDate), 
             by="country") %>%
   mutate(dateRel = yday(date) - yday(lcDate))  %>% ungroup() %>%
-  #mutate(date = floor_date(date, 'week')) %>%
-  #group_by(country, date, param, predVar) %>%
-  #summarise_at(vars(predic, predLwr, predUpr, observed, dateRel), mean, na.rm=TRUE) %>%
   ungroup()
 
 tsAirDiff <- tsAir %>%
@@ -256,7 +347,9 @@ tsAirDiff <- tsAir %>%
   group_by(country, param) %>%
   drop_na() %>%
   summarise_at(vars(r2:observed), mean) %>%
-  mutate(diff = observed-predic, diffUpr=observed- predUpr, diffLwr=observed-predLwr,
+  mutate(diff = observed-predic,
+         diffUpr=observed- predUpr, 
+         diffLwr=observed-predLwr,
          diffRel = (observed-predic)/observed*100,
          diffUprRel = (observed-predUpr)/observed*100,
          diffLwrRel = (observed-predLwr)/observed*100)
@@ -270,205 +363,6 @@ lmResults %>%
   summarise_at(vars(r2, fstat, pval), mean) %>%
   pivot_wider(names_from=param, values_from = c(r2,fstat,pval)) %>%
   write_csv('./DATA/Output/regression_results.csv')
-
-
-### Make lockdown summary graph --------------------------------------------------------
-
-View(tsAir %>%
-       group_by(country) %>%
-       summarise(days = max(dateRel)) %>% ungroup() %>% summarise(mean = mean(days, na.rm=T)))
-
-
-
-makeLockdownGraph <- function(){
-  c1 <- lockdownAll %>%
-    filter(country %in% countSelect) %>%
-    mutate(date = floor_date(date, 'week')) %>% 
-    group_by(type, date) %>%
-    summarise(count = n())  %>%
-    mutate(date = as.Date(date))%>%
-    ggplot(aes(x=date, y=count, fill=type)) + 
-    geom_bar(stat='identity', position='stack', color='grey', size=0.2) +
-    ylab('Number of countries') + 
-    #scale_x_date(breaks = pretty_breaks(10)) +
-    scale_fill_manual(name='Policy regulation',values=c('red','blue','yellow'), 
-                      labels=c('Stay-at-home restriction', 'Mobility restriction', 'Workplace closure'))+
-    theme(legend.position = c(0.3, 0.6),
-          axis.title.x = element_blank())
-  
-  c2 <- lockdown%>%
-    filter(country %in% countSelect) %>%
-    mutate(lcDate = as.Date(lcDate), days = as.numeric(ymd(20200515)-lcDate)) %>%
-    ggplot(aes(y=reorder(country, days))) +
-    geom_segment(aes(x=lcDate, xend=ymd(20200515), yend=country), alpha=0.4) +
-    geom_point(aes(x=lcDate), size=2, alpha=0.5) +
-    geom_point(aes(x=ymd(20200515)), size=2, alpha=0.5)+
-    geom_text(aes(x=lcDate, label= country),hjust = 'right', nudge_x = -2, size=3)+
-    geom_text(aes(x=ymd(20200515), label= days),hjust = 'left', nudge_x = 1, size=3) +
-    theme(axis.title = element_blank(),
-          axis.text.y = element_blank(),
-          axis.ticks.y = element_blank()) +
-    xlim(ymd(20200115), ymd(20200518))
-    cowplot::plot_grid(c1, c2, labels = "AUTO")
-    #grid.arrange(c1, c2, ncol=2, nrow=1,
-    #             widths=c(0.5,0.5), 
-    #             padding = unit(0, "line"), newpage = F)
-  
-}
-makeLockdownGraph()
-# Export 1000 x 400
-dev.off()
-
-### Make point change maps -----------------------------------------------------
-yday(ymd(20200101))
-ptDiff <- cityAirClean %>%
-  mutate( month = yday(date)) %>%
-  mutate(test1 = ifelse(date < ymd(20200201) & month %in% c(2,3,4), "yBaseline",
-                        ifelse(date >= ymd(20200201), "y2020", NA)))%>%
-  drop_na(test1) %>%
-  group_by(Lat, Lon, city_id, countryCode, test1, parameter) %>%
-  summarise(mean =mean(mean, na.rm=TRUE)) %>%
-  pivot_wider( names_from= test1, values_from=mean) %>%
-  mutate(diffPerc = (y2020-yBaseline)/yBaseline*100)%>%
-  mutate(diffAbs = y2020-yBaseline) %>%
-  drop_na(diffPerc)
-
-hist(ptDiff$diffPerc)
-unique(ptDiff$parameter)
-
-ptDiff %>%
-  filter(parameter == "o3")  %>%
-  ggplot()  +
-  geom_sf(data = world_shp, 
-          fill = NA, 
-          color = '#000000',
-          size = 0.1) +
-  geom_point(aes(x = Lon, y = Lat),alpha = .35)
-
-labelNo2H <- expression(paste(NO[2]," (", mu, g, "/", m^3,")", sep=""))
-labelO3H <- expression(paste(O[3]," (",mu, g, "/", m^3,")", sep=""))
-labelPM25H <- expression(paste(" PM2.5 ",mu, g, "/", m^3, sep=""))
-
-no2LimsH <- c(0,70)
-o3LimsH <- c(0,150)
-pm25LimsH <- c(0,120)
-df <- ptDiff
-
-makeHistPlotPt <- function(df, param, limits, label){
-  
-  toPlot <- df  %>%
-    filter(parameter == param)  %>% 
-    mutate("2020" = y2020, "3-yr av." = yBaseline) %>%
-    gather(key, val, "2020","3-yr av.") %>%
-    group_by(key) %>%
-    mutate(med = median(val)) %>%
-    filter(val < limits[2], val>limits[1]) 
-  
-  plot <- toPlot %>%
-    ggplot(aes(x=val, fill=key)) +
-    geom_density(alpha=0.4, color=NA) +
-    #geom_histogram(position='dodge') +
-    geom_vline(aes(xintercept = med, color=key), linetype=1, size=1) +
-    ylab("Data density") +
-    xlab(label)  +
-    theme(
-      legend.title = element_blank(),
-      legend.position = c(.75, .85),
-      #legend.position="top",
-      #legend.justification = c("right", "top"),
-      #legend.box.just = "right",
-      #legend.margin = margin(1, 1, 1, 1),
-      panel.background = element_rect(fill = alpha('white', 0.2)),
-      plot.background=element_rect(fill = alpha('white', 0.2)),
-      legend.background = element_rect(fill=alpha('white', 0.2))
-    )
-  return (plot)
-}
-
-
-h1Pt <- makeHistPlotPt(ptDiff, "no2", no2LimsH,labelNo2H)
-h2Pt <- makeHistPlotPt(ptDiff, "o3", o3LimsH,labelO3H)
-h3Pt <- makeHistPlotPt(ptDiff, "pm25", pm25LimsH,labelPM25H)
-
-
-
-
-labelNo2Pt <- expression(paste(Delta,NO[2]," (%)", sep=""))
-labelO3Pt <- expression(paste(Delta,O[3]," (%)", sep=""))
-labelPM25Pt <- expression(paste(Delta," PM2.5 "," (%)", sep=""))
-##labelNo2Pt2 <- expression(paste("|", Delta,NO[2],"|", sep=""))
-#labelO3Pt2 <- expression(paste("|", Delta,O[3],"|", sep=""))
-#labelPM25Pt2 <- expression(paste("|", Delta," PM2.5","|", sep=""))
-
-
-makePointMap <- function(df, param, label1, label2, inset,panelLab){
-  plot <- df %>%
-    filter(parameter == param)  %>%
-    ggplot()  +
-    geom_sf(data = world_shp, 
-            fill = NA, 
-            color = '#000000',
-            size = 0.06,
-            alpha=0.7) +
-    geom_point(aes(x = Lon, y = Lat, color = diffPerc), shape=21, stroke=0.3, size=2)+
-    coord_sf( expand = FALSE)+
-    xlim(-130,155) +
-    ylim(-60,75)+ 
-    theme(
-      axis.text = element_blank(),
-      axis.ticks = element_blank(),
-      legend.position = c(.05, .05),
-      legend.justification = c("left", "bottom"),
-      legend.box.just = "left",
-      plot.margin=grid::unit(c(0,0,0,0), "mm")
-    )+
-    xlab('') +ylab('') + 
-    #scale_size_continuous(name=label2, limits = c(0, 25),breaks=c(5,15,25),range = c(0, 10)) +
-    #scale_size_continuous(name=label2) +
-    scale_color_gradientn(
-      name=label1,
-      limits = c(-25, 25), 
-      oob = scales::squish,
-      #breaks = c(-25,15,0,15,25),
-      colours = rev(selectPal))
-  g2 <- ggplotGrob(inset)
-  g3 <- grobTree(textGrob(panelLab, x=0.01,  y=0.95, hjust=0,
-                          gp=gpar(fontsize=20, fontface="bold")))
-  plot <- plot + 
-    annotation_custom(grob = g2, xmin=40, xmax=115, ymin=-58, ymax=5) + 
-    annotation_custom(g3)
-  
-  return (plot)
-}
-makePointMap(ptDiff, "no2", labelNo2Pt, labelNo2Pt2, h1Pt, "A")
-
-p1 <- makePointMap(ptDiff, "no2", labelNo2Pt, labelNo2Pt2, h1Pt, "A")
-p2 <- makePointMap(ptDiff, "o3", labelO3Pt, labelO3Pt2, h2Pt, "B")
-p3 <- makePointMap(ptDiff, "pm25", labelPM25Pt, labelPM25Pt2, h3Pt, "C")
-
-ggarrange(p1, p2, p3, ncol = 3, labels = c("A", "B", "C"))
-
-grid.arrange(p1,p2,p3, ncol=1,nrow=3, heights=c(0.33,0.33,0.33), padding = unit(0, "line"), newpage = F)
-#Export as 1200:1500
-dev.off()
-
-ptDiff %>%
-  filter(diffPerc < 10000) %>%
-  ggplot(aes(x=diffPerc)) +geom_histogram() + facet_wrap(~parameter)
-getCityChangeStats <- function(){
-  ptDiff %>%
-    filter(diffPerc < 10000) %>%
-    left_join(cityPop, by='city_id') %>%
-    drop_na(population) %>%
-    ungroup() %>% group_by(parameter) %>%
-    summarise(diffPerc_IQR = IQR(diffPerc, na.rm=TRUE),
-              diffAbs_IQR = IQR(diffAbs, na.rm=TRUE),
-              diffPerc = weighted.mean(diffPerc, population, na.rm=TRUE),
-              diffAbs = weighted.mean(diffAbs, population, na.rm=TRUE))
-}
-getCityChangeStats()
-
-
 
 ### Make aggregate change plot -----------------------------------------------------
 
@@ -549,13 +443,8 @@ pp1<- makePredicPlot(tsAirDiff,LabP)
 pp2<- makePredicPlotRel(tsAirDiff,LabP2)
 
 ggarrange(pp1, pp2, nrow = 2, labels = c("A", "B"))
-
 # Export 850 x 750
 
-tsAirDiff %>%
-  mutate(check = ifelse(diffRel <0, 1, 0)) %>%
-  group_by(param) %>%
-  summarise(check =sum(check))
 
 getTotalChangeStats <- function(){
   
@@ -570,26 +459,16 @@ getTotalChangeStats()
 
 getChangeStats <- function(){
   
- View(tsAirDiff %>%
+  tsAirDiff %>%
     left_join(countPop, by='country') %>%
     gather(key, val, diff:diffLwrRel) %>%
     group_by(param, key) %>%
-    summarise(val = weighted.mean(val, pop18)))
+    summarise(val = weighted.mean(val, pop18)) %>%
+    pivot_wider(values_from = val, names_from = param)
 }
 getChangeStats()
 
 ### Make time series plot -----------------------------------------------------
-
-tsAir %>%
-  filter(dateRel > -30) %>%
-  gather(key, val, predic, observed) %>%
-  filter(param == "no2", predVar == "meanRel") %>%
-  #filter(country == "China") %>%
-  ggplot(aes(x=dateRel, y=val, color=key)) +
-  geom_line() +
-  geom_ribbon(aes(ymin=predLwr, ymax=predUpr), alpha=0.4, color=NA) +
-  facet_wrap(~country, scales='free') +
-  geom_vline(xintercept = 0, linetype=2)
 
 tsAirSmooth <- tsAir  %>% 
   filter(country %in% countSelect) %>%
@@ -602,8 +481,6 @@ tsAirSmooth <- tsAir  %>%
 continents <- continents %>%
   mutate(country = countrycode(iso_a3, origin = 'iso3c', destination = 'country.name'))
 
-tsAirSmooth %>%
-  left_join(continents)
 
 makeTSplot <- function(){
   lab1 <- expression(paste(NO[2], " (", mu, g, "/", m^3,")", sep=""))
@@ -612,10 +489,12 @@ makeTSplot <- function(){
   
   makeSubPlot <- function(par, lab, legend, xlab){
     #par <- 'no2'
+    
     plot <- tsAirSmooth %>%
       left_join(countPop, by='country') %>%
       filter(dateRel > -30, param == par) %>%
       filter(continent %in% c('Asia', 'Europe', 'North America')) %>%
+      #filter(continent %in% c('Europe')) %>%
       gather(key, val, predic, observed) %>%
       filter(predVar == "mean") %>%
       mutate(key = factor(key, levels=c('predic', 'observed'))) %>%
@@ -655,8 +534,33 @@ makeTSplot()
 # Export 1300 x 400
 dev.off()
 
-countAirDifTs <- tsAir  %>% 
-  filter(country %in% countSelect)%>%
+polvspol <- tsAirSmooth %>%
+  filter(predVar == 'mean') %>%
+  #filter(dateRel > 0) %>%
+  mutate(check = ifelse(param == 'no2' & country %in% c('Canada', 'Mexico', 'United States', 'Thailand') & predic > 1, 1, 0),
+         check2 = ifelse(param == 'o3' & country %in% c('Australia','Canada', 'Mexico', 'United States', 'Thailand') & predic > 1, 1, 0),
+         check3 = ifelse(param == 'pm25' & country %in% c('Ireland','Finland', 'United Kingdom') & predic > 20, 1, 0)) %>%
+  filter(check == 0, check2 == 0, check3 == 0) %>%
+  mutate(diff = observed - predic) %>%
+  dplyr::select(country, date, dateRel, param, diff) %>%
+  drop_na(diff) %>%
+  pivot_wider(names_from=param, values_from=diff)
+
+polvspol %>%
+  left_join(continents) %>%
+  ggplot(aes(x=no2, y=o3)) +
+  geom_point(size=0.2) +
+  geom_smooth(method='lm', se=F) +
+  facet_wrap(~country, scales='free') +
+  theme(legend.position='none')
+
+countAirDifTs <- tsAirSmooth %>% 
+  filter(country %in% countSelect)  %>%
+  drop_na(predic) %>%
+  mutate(check = ifelse(param == 'no2' & country %in% c('Canada', 'Mexico', 'United States', 'Thailand') & predic > 1, 1, 0),
+         check2 = ifelse(param == 'o3' & country %in% c('Australia','Canada', 'Mexico', 'United States', 'Thailand') & predic > 1, 1, 0),
+         check3 = ifelse(param == 'pm25' & country %in% c('Ireland','Finland', 'United Kingdom') & predic > 20, 1, 0)) %>%
+  filter(check == 0, check2 == 0, check3 == 0)  %>%
   left_join(countPop, by='country') %>%
   filter(dateRel > -14)  %>%
   mutate(diff = observed-predic, diffUpr=observed- predUpr, diffLwr=observed-predLwr,
@@ -664,8 +568,11 @@ countAirDifTs <- tsAir  %>%
          diffUprRel = (observed-predUpr)/observed*100,
          diffLwrRel = (observed-predLwr)/observed*100)
 
+
+
 makeTSplotSI <- function(){
-  countAirDifTs %>%
+  countAirDifTs  %>%
+    filter(predVar == 'meanRel') %>%
     mutate(lcDate = as.Date(lcDate)) %>%
     ggplot(aes(x=date, y=diff, color=param)) +
     geom_smooth(se=F) +
@@ -677,7 +584,7 @@ makeTSplotSI <- function(){
     xlab('') +
     theme(
       strip.background =  element_rect(
-       fill=NA, linetype="solid"
+        fill=NA, linetype="solid"
       ),
       legend.position="top",
       legend.title = element_blank(),
@@ -694,3 +601,97 @@ makeTSplotSI()
 
 dev.off()
 # Export 1000 x 1000
+
+
+lab1 <- expression(paste(NO[2], " (", mu, g, "/", m^3,")", sep=""))
+lab2 <- expression(paste(O[3], " (", mu, g, "/", m^3,")", sep=""))
+lab3 <- expression(paste("PM2.5", " (", mu, g, "/", m^3,")", sep=""))
+
+pollutant <- 'no2'
+makeTSplotSIseparate <- function(pollutant, lab){
+  
+  tsAirSmooth %>%
+    mutate(lcDate = as.Date(lcDate)) %>%
+    filter(predVar == 'mean')%>%
+    filter(dateRel > -30) %>%
+    group_by(country, param) %>%
+    drop_na(predic) %>%
+    mutate(check = ifelse(param == 'no2' & country %in% c('Canada', 'Mexico', 'United States', 'Thailand') & predic > 1, 1, 0),
+           check2 = ifelse(param == 'o3' & country %in% c('Australia','Canada', 'Mexico', 'United States', 'Thailand') & predic > 1, 1, 0),
+           check3 = ifelse(param == 'pm25' & country %in% c('Ireland','Finland', 'United Kingdom') & predic > 20, 1, 0)) %>%
+    filter(check == 0, check2 == 0, check3 == 0) %>%
+    filter(param == pollutant)  %>%
+    gather(key, val, predic, observed) %>%
+    mutate(key = factor(key, levels=c('predic', 'observed'))) %>%
+    ggplot(aes(x=date, y=val, color=key)) +
+    geom_vline(aes(xintercept = lcDate), linetype=2)+
+    ylab(lab) +
+    xlab('')+
+    geom_ribbon(aes(ymin=predLwr, ymax=predUpr), alpha=0.2, color=NA)+
+    geom_line() +
+    scale_color_manual(values=c('black', 'red'), labels=c('Benchmark','Observed'))+
+    #geom_smooth(span=0.2, se=F) +
+    facet_wrap(~country, scales='free')+
+    theme(
+      strip.background =  element_rect(
+        fill=NA, linetype="solid"
+      ),
+      legend.position="top",
+      legend.title = element_blank(),
+      strip.text = element_text(
+        size = 10, color = "black",
+        margin = grid::unit(c(1,0,1,0), "mm")
+      )
+    ) +
+    geom_vline(aes(xintercept = lcDate), linetype=2)+
+    scale_x_date(labels = date_format("%b"))
+}
+makeTSplotSIseparate('no2', lab1)
+# Export 1000 x 1000
+makeTSplotSIseparate('o3', lab2)
+makeTSplotSIseparate('pm25', lab3)
+
+### Make lockdown summary graph --------------------------------------------------------
+
+makeLockdownGraph <- function(){
+  
+  toPlot1 <- lockdownAll %>%
+    filter(country %in% countSelect) %>%
+    mutate(date = as.Date(floor_date(date, 'week')))
+  c1 <-  toPlot1%>% 
+    group_by(type, date) %>%
+    summarise(count = n())  %>%
+    mutate(date = as.Date(date)) %>%
+    ggplot(aes(x=date, y=count, fill=type)) + 
+    geom_bar(stat='identity', position='stack', color='grey', size=0.2) +
+    ylab('Number of countries') + 
+    #scale_x_date(breaks = pretty_breaks(10)) +
+    scale_fill_manual(name='Policy regulation',values=c('red','blue','#219c51'), 
+                      labels=c('Stay-at-home restriction', 'Mobility restriction', 'Workplace closure')) +
+    theme(legend.position = c(0.3, 0.6),
+          axis.title.x = element_blank())
+  c2 <- lockdown%>%
+    filter(country %in% countSelect) %>%
+    mutate(lcDate = as.Date(lcDate), days = round(as.numeric(ymd(20200515)-lcDate))) %>%
+    ggplot(aes(y=reorder(country, days))) +
+    geom_segment(aes(x=lcDate, xend=ymd(20200515), yend=country), alpha=0.4) +
+    geom_point(aes(x=lcDate), size=2, alpha=0.5) +
+    geom_point(aes(x=ymd(20200515)), size=2, alpha=0.5) +
+    theme(axis.title = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    xlim(ymd(20200120), ymd(20200615))+
+    geom_point(inherit.aes=FALSE, data=toPlot1, aes(y=country, x=date, color=type), shape=4, size=2, alpha=0.7) +
+    geom_text(aes(x=ymd(20200525), label= country),hjust = 'left', nudge_x = -2, size=3)+
+    geom_text(aes(x=ymd(20200515), label= days),hjust = 'left', nudge_x = 1, size=3)+
+    scale_color_manual(name='Policy regulation',values=c('red','blue','#219c51'), 
+                       labels=c('Stay-at-home restriction', 'Mobility restriction', 'Workplace closure'))+
+    theme(legend.position = "none")
+  cowplot::plot_grid(c1, c2, labels = "AUTO")
+  
+}
+makeLockdownGraph()
+
+dev.off()
+
+
