@@ -64,14 +64,6 @@ cityAirClean <- cityAirClean %>% left_join(cityLookup, by=c('countryCode', 'city
 countryAir <- read_csv('./DATA/Stations/openaq/country_day_agg_cleaned.csv')
 unique(countryAir$countryCode)
 
-countryAir %>%
-  left_join(lockdown , by='countryCode') %>%
-  drop_na(lcDate) %>%
-  filter(date > ymd(20200101), parameter == "no2") %>%
-  ggplot(aes(x=date, y=mean)) +
-  geom_point() +
-  facet_wrap(~countryCode)
-
 # Filter out countries with missing data
 countryAir <- countryAir %>%
   filter(!countryCode %in% c('BEL', 'BGR', 'CYP', 'MNG', 'SWE', 'ROU', 'EST', 'GRC'))
@@ -90,10 +82,11 @@ unique(clim$countryCode)
 
 ### Make point change maps -----------------------------------------------------
 # Calculate simple differnece in air pollution concentration between 3-yr baseline and lockdown months
+# the period Jan-May is considered
 ptDiff <- cityAirClean %>%
   mutate( month = month(date)) %>%
-  mutate(test1 = ifelse(date < ymd(20200201) & month %in% c(2,3,4,5), "yBaseline",
-                        ifelse(date >= ymd(20200201), "y2020", NA)))%>%
+  mutate(test1 = ifelse(date < ymd(20200101) & month %in% c(1,2,3,4,5), "yBaseline",
+                        ifelse(date >= ymd(20200101), "y2020", NA)))%>%
   drop_na(test1) %>%
   group_by(Lat, Lon, city_id, countryCode, test1, parameter) %>%
   summarise(mean =mean(mean, na.rm=TRUE)) %>%
@@ -150,7 +143,7 @@ labelPM25Pt <- expression(paste(Delta," PM2.5 "," (%)", sep=""))
 
 
 makePointMap <- function(param, label1, label2, inset,panelLab){
-  plot <- df %>%
+  plot <- ptDiff %>%
     filter(parameter == param)  %>%
     ggplot()  +
     geom_sf(data = world_shp, 
