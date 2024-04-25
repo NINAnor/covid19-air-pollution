@@ -4,7 +4,7 @@ Data and scripts in support of published manuscript:  https://www.pnas.org/doi/f
 
 This is an Rproject with a complex workflow that requires manual transfer of data between local PC, Google Earth Engine and Amazon Web Services. Therefore it is not a seamless workflow and anyone interested in comonents of the analysis are encouraged to contact Zander Venter: zander.venter@nina.no
 
-Due to GitHub data file limitations, there are three CSV files that have been truncated to save space. Please contact Zander Venter for acces to original files if needed.
+Due to GitHub data file limitations, there are three CSV files that have been truncated to save space. Please use the full data stored at Zenodo: https://zenodo.org/records/11064640
 
 This applies to files:
 - "./DATA/Stations/openaq/city_day_agg.csv"
